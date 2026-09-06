@@ -8,7 +8,7 @@
 //    Firebaseコンソール → プロジェクトの設定 → Cloud Messaging
 //    → 「ウェブプッシュ証明書」→ 鍵ペアを生成 → 表示された文字列を貼る。
 import { getMessaging, getToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging.js";
-import { firebaseApp, db, auth } from './firebase.js?v=261';
+import { firebaseApp, db, auth } from './firebase.js?v=262';
 import { doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const VAPID_KEY = 'BOhb3tbhUOgpwnVP6EHVoX3jKSkAsMMkjrbr4aD_Fi3gpAJiWBcXF0SN_6w9yLGTrNwqMaih1yzWnH8bmg3khaA';
