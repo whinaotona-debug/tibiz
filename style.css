@@ -1658,6 +1658,12 @@ textarea:focus-visible,
   box-shadow: 0 24px 60px rgba(18, 32, 28, 0.28);
   animation: ie-pop-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+.ie-dialog-panel.ie-dialog-scroll {
+  max-width: min(380px, 100%);
+  max-height: min(88vh, 720px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
 .ie-dialog-title {
   font-size: 15px;
   font-weight: 900;
@@ -1675,6 +1681,44 @@ textarea:focus-visible,
   overflow-wrap: anywhere;
 }
 .ie-dialog-gap { height: 8px; }
+.ie-dialog-code {
+  margin: 10px 0 14px;
+  padding: 12px 10px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  color: var(--ie-ink);
+  background: #f4f9f7;
+  border: 1px solid #e3eeea;
+  border-radius: 14px;
+}
+.ie-dialog-guide-lead { margin-bottom: 6px; }
+.ie-dialog-guide-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #7a8f88;
+}
+.ie-dialog-guide-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0 10px;
+  border-radius: 14px;
+  border: 1px solid #e3eeea;
+  background: #fff;
+  object-fit: contain;
+}
+.ie-dialog-actions-stack {
+  flex-direction: column;
+}
+.ie-dialog-secondary {
+  background: #fff;
+  color: var(--ie-ink-soft);
+  border: 1px solid var(--ie-line);
+}
 .ie-dialog-input {
   width: 100%;
   padding: 12px;

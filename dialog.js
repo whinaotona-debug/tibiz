@@ -1,6 +1,6 @@
 // 標準の alert / confirm / prompt を、アプリの見た目に合わせたダイアログに置き換える。
 // render() が #app を作り直しても消えないよう、専用のルート要素に描画する。
-import { esc } from './utils.js?v=263';
+import { esc } from './utils.js?v=264';
 
 let dialogRoot = null;
 let busyRoot = null;
@@ -128,6 +128,104 @@ export function showConfirm(message, opts = {}) {
 
 export function showPrompt(message, opts = {}) {
   return openDialog({ ...opts, type: 'prompt', message });
+}
+
+/**
+ * 親の新規登録完了後：同期ID・説明画像・共有ボタン付き。
+ * @param {string} code 同期ID
+ */
+export function showParentSetupComplete(code) {
+  const syncCode = String(code || '').trim();
+  if (!syncCode) return showAlert('同期IDを表示できませんでした', { title: '設定が完了しました' });
+
+  if (closeActive) closeActive(null);
+  dialogRoot = ensureRoot('ie-dialog-root');
+  lastFocused = document.activeElement;
+
+  const imgSrc = encodeURI('説明.png');
+  dialogRoot.innerHTML = `
+    <div class="ie-dialog-backdrop" data-dialog-backdrop>
+      <div class="ie-dialog-panel ie-dialog-scroll" role="alertdialog" aria-modal="true" aria-label="設定が完了しました">
+        <h2 class="ie-dialog-title">設定が完了しました</h2>
+        <div class="ie-dialog-body">
+          <p class="ie-dialog-line">お子さまの端末と連携するための同期IDです。</p>
+          <p class="ie-dialog-code" aria-label="同期ID">${esc(syncCode)}</p>
+          <p class="ie-dialog-line ie-dialog-guide-lead">お子さまの端末では、下の画面の場所から同期IDを入力します。</p>
+          <img class="ie-dialog-guide-img" src="${esc(imgSrc)}" alt="子供の端末で同期IDを入力する場所の説明" />
+          <p class="ie-dialog-line ie-dialog-guide-note">「子供として開始」→ この同期IDを入力してください。</p>
+        </div>
+        <div class="ie-dialog-actions ie-dialog-actions-stack">
+          <button type="button" class="ie-dialog-btn ie-dialog-secondary" data-dialog-share>子供に同期IDを送る</button>
+          <button type="button" class="ie-dialog-btn ie-dialog-ok" data-dialog-ok>OK</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      closeActive = null;
+      document.removeEventListener('keydown', onKeyDown, true);
+      dialogRoot.innerHTML = '';
+      if (lastFocused && document.body.contains(lastFocused)) {
+        try { lastFocused.focus({ preventScroll: true }); } catch (e) {}
+      }
+      resolve(value);
+    };
+
+    closeActive = () => finish(true);
+
+    const shareText = [
+      'イエノミクスで親子連携しよう！',
+      '',
+      `同期ID：${syncCode}`,
+      '',
+      'お子さまの端末でイエノミクスを開き、「子供として開始」からこの同期IDを入力してください。'
+    ].join('\n');
+
+    dialogRoot.querySelector('[data-dialog-share]')?.addEventListener('click', async () => {
+      try {
+        if (typeof navigator.share === 'function') {
+          await navigator.share({
+            title: 'イエノミクスの同期ID',
+            text: shareText
+          });
+          return;
+        }
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+      }
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shareText);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = shareText;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+        }
+        showToast('連携用の文面をコピーしました');
+      } catch (e) {
+        showToast('コピーできませんでした');
+      }
+    });
+
+    dialogRoot.querySelector('[data-dialog-ok]')?.addEventListener('click', () => finish(true));
+    dialogRoot.querySelector('[data-dialog-backdrop]')?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) finish(true);
+    });
+    document.addEventListener('keydown', onKeyDown, true);
+    setTimeout(() => {
+      dialogRoot.querySelector('[data-dialog-ok]')?.focus({ preventScroll: true });
+    }, 30);
+  });
 }
 
 /** 画面下に数秒だけ出る軽い通知。成功メッセージ向け。 */

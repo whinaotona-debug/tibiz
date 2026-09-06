@@ -1,4 +1,4 @@
-import { state } from './state.js?v=263';
+import { state } from './state.js?v=264';
 
 /**
  * UI用フリガナ。親には出さない。子供でONのときだけ自前マークアップ。
