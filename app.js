@@ -1,17 +1,17 @@
-import { state } from './state.js?v=262';
-import { render, drawInvestChart } from './ui.js?v=262';
-import { applyFuriganaState, requestPushPermission, sendPushNotification, getTemplateIdFromTask, dateKeyToValue, getCurrentMarketRates, japanTodayKey, japanYesterdayKey, japanParts, japanDeadlineMs, msUntilJapanMidnight, marketNameFromId, MARKET_META, MARKET_ORDER, getInvestmentPortfolioValue, getHoldingValue, getHoldingShares, getInvestmentValues, getActiveInvestments, buildInvestmentEodRows, analyzeInvestmentEodMigration, INVESTMENT_EOD_MIGRATION_KEY, selfTestInvestmentEodLogic, normalizeSheetUrl, parseMarketSheetCsv, setMarketSheetSeries, scheduledPaymentAmount, shouldSweepExpiredTask, isScheduledPaymentDue, lastScheduledPaymentDueKey, bankDepositBalance, clearInstallBrowserHelp, isStandalonePwa, getLineInstallGateKind } from './utils.js?v=262';
-import { showAlert, showConfirm, showPrompt, showToast, setBusy } from './dialog.js?v=262';
-import { startTutorial, hasSeenTutorial } from './tutorial.js?v=262';
-import { initPush, isPushActive, isPushSupported, requestPushPermission as askPushPermission, unregisterPush, getPushError } from './push.js?v=262';
-import { db, auth, firebaseApp } from './firebase.js?v=262';
+import { state } from './state.js?v=263';
+import { render, drawInvestChart } from './ui.js?v=263';
+import { applyFuriganaState, requestPushPermission, sendPushNotification, getTemplateIdFromTask, dateKeyToValue, getCurrentMarketRates, japanTodayKey, japanYesterdayKey, japanParts, japanDeadlineMs, msUntilJapanMidnight, marketNameFromId, MARKET_META, MARKET_ORDER, getInvestmentPortfolioValue, getHoldingValue, getHoldingShares, getInvestmentValues, getActiveInvestments, buildInvestmentEodRows, analyzeInvestmentEodMigration, INVESTMENT_EOD_MIGRATION_KEY, selfTestInvestmentEodLogic, normalizeSheetUrl, parseMarketSheetCsv, setMarketSheetSeries, scheduledPaymentAmount, shouldSweepExpiredTask, isScheduledPaymentDue, lastScheduledPaymentDueKey, bankDepositBalance, clearInstallBrowserHelp, isStandalonePwa, getLineInstallGateKind } from './utils.js?v=263';
+import { showAlert, showConfirm, showPrompt, showToast, setBusy } from './dialog.js?v=263';
+import { startTutorial, hasSeenTutorial } from './tutorial.js?v=263';
+import { initPush, isPushActive, isPushSupported, requestPushPermission as askPushPermission, unregisterPush, getPushError } from './push.js?v=263';
+import { db, auth, firebaseApp } from './firebase.js?v=263';
 import {
   computeBankInterestState,
   bankInterestStateChanged,
   bankInterestWritePayload,
   initialBankDepositFields,
   selfTestBankInterestLogic
-} from './bankInterest.js?v=262';
+} from './bankInterest.js?v=263';
 import { collection, addDoc, onSnapshot, query, where, updateDoc, doc, setDoc, getDoc, getDocs, increment, deleteDoc, writeBatch, runTransaction, arrayUnion, deleteField } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { signInWithEmailAndPassword, signInAnonymously, signOut, isSignInWithEmailLink, signInWithEmailLink, updatePassword, verifyPasswordResetCode, confirmPasswordReset } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
@@ -1657,9 +1657,16 @@ window.saveNewPassword = async () => {
     state.setupLoadingMessage = '';
     state.role = 'parent';
     state.view = 'home';
+    state.familyCode = code;
+    localStorage.setItem('ienomics_role', 'parent');
+    localStorage.setItem('ienomics_familyCode', code);
     applyFuriganaState();
     await showAlert(`同期IDは【 ${code} 】です。\nお子様の端末でこのIDを入力すると連携できます。`, { title: '設定が完了しました' });
     runMigrationAndLoadChildren(user.uid);
+    // 子供の新規連携と同じく、初回ガイド終了後に通知許可を案内する
+    if (!hasSeenTutorial()) {
+      setTimeout(() => startTutorial('parent', { onFinish: onboardingTutorialFinish }), 700);
+    }
   } catch (error) {
     state.isSending = false;
     state.setupLoadingMessage = '';
@@ -3022,6 +3029,6 @@ window.loginParent = async () => {
 // PWA: オフラインでも開けるようにサービスワーカーを登録する
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js?v=262').catch(err => console.warn('SW登録失敗:', err));
+    navigator.serviceWorker.register('sw.js?v=263').catch(err => console.warn('SW登録失敗:', err));
   });
 }
