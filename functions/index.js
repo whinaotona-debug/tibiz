@@ -11,13 +11,19 @@
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
+const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
+const { Resend } = require('resend');
 
 initializeApp();
 const db = getFirestore();
+
+/** Resend API キー（Secret Manager: RESEND_API_KEY）。コード・Client には置かない */
+const resendApiKey = defineSecret('RESEND_API_KEY');
 
 const JST = 'Asia/Tokyo';
 const WEEKDAY_EN = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -905,4 +911,59 @@ async function runProcessScheduledPayments() {
 exports.processScheduledPayments = onSchedule(
   { schedule: 'every 15 minutes', timeZone: 'Asia/Tokyo' },
   runProcessScheduledPayments
+);
+
+/**
+ * 第1段階: Resend 疎通確認用。ログイン済みユーザーのみ。
+ * Auth 本番フローには未接続。API キーはレスポンスに含めない。
+ *
+ * 呼び出し例（data）: { to: 'you@example.com' }
+ * 任意: subject, text
+ */
+exports.sendTestEmail = onCall(
+  {
+    region: 'asia-northeast1',
+    secrets: [resendApiKey]
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'ログインが必要です');
+    }
+
+    const to = String(request.data?.to || '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      throw new HttpsError('invalid-argument', '有効な送信先メールアドレス (to) を指定してください');
+    }
+
+    const subject = String(request.data?.subject || 'イエノミクス テストメール').trim()
+      || 'イエノミクス テストメール';
+    const text = String(request.data?.text || '').trim()
+      || [
+        'これは Firebase Cloud Functions → Resend の疎通確認メールです。',
+        '',
+        `送信元: noreply@ienomics.com`,
+        `呼び出し UID: ${request.auth.uid}`,
+        `時刻: ${new Date().toISOString()}`
+      ].join('\n');
+
+    const resend = new Resend(resendApiKey.value());
+    const { data, error } = await resend.emails.send({
+      from: 'イエノミクス <noreply@ienomics.com>',
+      to: [to],
+      subject,
+      text
+    });
+
+    if (error) {
+      console.error('[sendTestEmail] Resend error', {
+        uid: request.auth.uid,
+        to,
+        message: error.message || error
+      });
+      throw new HttpsError('internal', 'メール送信に失敗しました');
+    }
+
+    console.log('[sendTestEmail] sent', { uid: request.auth.uid, to, id: data?.id || null });
+    return { ok: true, id: data?.id || null };
+  }
 );
