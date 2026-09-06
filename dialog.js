@@ -1,6 +1,6 @@
 // 標準の alert / confirm / prompt を、アプリの見た目に合わせたダイアログに置き換える。
 // render() が #app を作り直しても消えないよう、専用のルート要素に描画する。
-import { esc } from './utils.js?v=266';
+import { esc } from './utils.js?v=267';
 
 let dialogRoot = null;
 let busyRoot = null;
@@ -131,6 +131,66 @@ export function showPrompt(message, opts = {}) {
 }
 
 /**
+ * 親子連携用の共有文面（Web Share / コピー共通）
+ * @param {string} code 同期ID
+ */
+export function buildFamilySyncShareText(code) {
+  const syncCode = String(code || '').trim();
+  return [
+    'イエノミクスで親子連携しよう！',
+    '',
+    `同期ID：${syncCode}`,
+    '',
+    'お子さまの端末でイエノミクスを開いて、',
+    '同期IDを入力してください。',
+    '',
+    '▼ イエノミクス',
+    'https://whinaotona-debug.github.io/ienomics/index.html'
+  ].join('\n');
+}
+
+/**
+ * 同期IDを共有する。Web Share API、非対応時はクリップボードへ。
+ * @param {string} code
+ */
+export async function shareFamilySyncLink(code) {
+  const syncCode = String(code || '').trim();
+  if (!syncCode) {
+    showToast('同期IDがありません');
+    return;
+  }
+  const shareText = buildFamilySyncShareText(syncCode);
+  try {
+    if (typeof navigator.share === 'function') {
+      await navigator.share({
+        title: 'イエノミクスの同期ID',
+        text: shareText
+      });
+      return;
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareText);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = shareText;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    showToast('連携用の文面をコピーしました');
+  } catch (e) {
+    showToast('コピーできませんでした');
+  }
+}
+
+/**
  * 親の新規登録完了後：同期ID・説明画像・共有ボタン付き。
  * @param {string} code 同期ID
  */
@@ -178,47 +238,8 @@ export function showParentSetupComplete(code) {
 
     closeActive = () => finish(true);
 
-    const shareText = [
-      'イエノミクスで親子連携しよう！',
-      '',
-      `同期ID：${syncCode}`,
-      '',
-      'お子さまの端末でイエノミクスを開いて、',
-      '同期IDを入力してください。',
-      '',
-      '▼ イエノミクス',
-      'https://whinaotona-debug.github.io/ienomics/index.html'
-    ].join('\n');
-
-    dialogRoot.querySelector('[data-dialog-share]')?.addEventListener('click', async () => {
-      try {
-        if (typeof navigator.share === 'function') {
-          await navigator.share({
-            title: 'イエノミクスの同期ID',
-            text: shareText
-          });
-          return;
-        }
-      } catch (e) {
-        if (e?.name === 'AbortError') return;
-      }
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shareText);
-        } else {
-          const ta = document.createElement('textarea');
-          ta.value = shareText;
-          ta.style.position = 'fixed';
-          ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          ta.remove();
-        }
-        showToast('連携用の文面をコピーしました');
-      } catch (e) {
-        showToast('コピーできませんでした');
-      }
+    dialogRoot.querySelector('[data-dialog-share]')?.addEventListener('click', () => {
+      shareFamilySyncLink(syncCode);
     });
 
     dialogRoot.querySelector('[data-dialog-ok]')?.addEventListener('click', () => finish(true));
