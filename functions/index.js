@@ -17,13 +17,26 @@ const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
+const { getAuth } = require('firebase-admin/auth');
 const { Resend } = require('resend');
+const crypto = require('crypto');
 
 initializeApp();
 const db = getFirestore();
+const adminAuth = getAuth();
 
 /** Resend API キー（Secret Manager: RESEND_API_KEY）。コード・Client には置かない */
 const resendApiKey = defineSecret('RESEND_API_KEY');
+
+/** Client の APP_URL / actionCodeSettings と同じ（サーバー固定） */
+const AUTH_ACTION_CODE_SETTINGS = {
+  url: 'https://whinaotona-debug.github.io/ienomics/index.html',
+  handleCodeInApp: true
+};
+
+const AUTH_EMAIL_FROM = 'イエノミクス <noreply@ienomics.com>';
+const AUTH_EMAIL_RATE_LIMIT_MS = 10 * 60 * 1000;
+const AUTH_EMAIL_RATE_COLLECTION = 'authEmailRateLimits';
 
 const JST = 'Asia/Tokyo';
 const WEEKDAY_EN = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -965,5 +978,257 @@ exports.sendTestEmail = onCall(
 
     console.log('[sendTestEmail] sent', { uid: request.auth.uid, to, id: data?.id || null });
     return { ok: true, id: data?.id || null };
+  }
+);
+
+/* ===== 認証メール（Resend）第2段階: Functions のみ。Client 未接続 ===== */
+
+function normalizeAuthEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isValidAuthEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function maskAuthEmail(email) {
+  const at = email.indexOf('@');
+  if (at <= 0) return '***';
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  return (local.length <= 2 ? `${local[0] || ''}***` : `${local.slice(0, 2)}***`) + domain;
+}
+
+/** Firestore ドキュメント ID 用。生メールは使わない */
+function authEmailRateLimitDocId(normalizedEmail) {
+  return crypto.createHash('sha256').update(normalizedEmail).digest('hex');
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * 同一メール 10分に1回。将来 IP 等を足せるよう opts を受け取れる形。
+ * 送信枠を確保する（成功後に確定。失敗時は releaseAuthEmailRateLimit）。
+ * @param {string} normalizedEmail
+ * @param {{ kind?: string }} [opts]
+ */
+async function assertAuthEmailRateLimit(normalizedEmail, opts = {}) {
+  const ref = db.collection(AUTH_EMAIL_RATE_COLLECTION).doc(authEmailRateLimitDocId(normalizedEmail));
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const lastSentAt = Number(snap.exists ? snap.get('lastSentAt') : 0) || 0;
+    if (lastSentAt && now - lastSentAt < AUTH_EMAIL_RATE_LIMIT_MS) {
+      const retryMin = Math.ceil((AUTH_EMAIL_RATE_LIMIT_MS - (now - lastSentAt)) / 60000);
+      throw new HttpsError(
+        'resource-exhausted',
+        `送信回数の上限に達しました。約${retryMin}分後に再度お試しください。`
+      );
+    }
+    tx.set(ref, {
+      lastSentAt: now,
+      updatedAt: FieldValue.serverTimestamp(),
+      // 将来の拡張用（IP 制限など）。生メールは保存しない。
+      kind: opts.kind || null
+    }, { merge: true });
+  });
+}
+
+/** Resend 失敗時などに、直前に確保した送信枠を戻す */
+async function releaseAuthEmailRateLimit(normalizedEmail) {
+  const ref = db.collection(AUTH_EMAIL_RATE_COLLECTION).doc(authEmailRateLimitDocId(normalizedEmail));
+  try {
+    await ref.set({
+      lastSentAt: 0,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.warn('[authEmailRateLimit] release failed', e?.message || e);
+  }
+}
+
+async function sendResendAuthEmail({ to, subject, text, html, logTag }) {
+  const resend = new Resend(resendApiKey.value());
+  const { data, error } = await resend.emails.send({
+    from: AUTH_EMAIL_FROM,
+    to: [to],
+    subject,
+    text,
+    html
+  });
+  if (error) {
+    console.error(`[${logTag}] Resend error`, {
+      to: maskAuthEmail(to),
+      message: error.message || error
+    });
+    throw new HttpsError('internal', 'メール送信に失敗しました');
+  }
+  return data?.id || null;
+}
+
+function buildSignInEmailContent(link) {
+  const subject = '【イエノミクス】メールアドレスの確認';
+  const text = [
+    'イエノミクスのメールアドレス確認です。',
+    '',
+    '以下のリンクを開いて登録を続けてください。',
+    link,
+    '',
+    'このメールに心当たりがない場合は、無視してください。'
+  ].join('\n');
+  const safe = escapeHtml(link);
+  const html = [
+    '<p>イエノミクスのメールアドレス確認です。</p>',
+    '<p>以下のボタン（またはリンク）を開いて登録を続けてください。</p>',
+    `<p><a href="${safe}">メールアドレスを確認する</a></p>`,
+    `<p style="word-break:break-all;font-size:12px;color:#666">${safe}</p>`,
+    '<p>このメールに心当たりがない場合は、無視してください。</p>'
+  ].join('');
+  return { subject, text, html };
+}
+
+function buildPasswordResetEmailContent(link) {
+  const subject = '【イエノミクス】パスワード再設定';
+  const text = [
+    'イエノミクスのパスワード再設定です。',
+    '',
+    '以下のリンクを開いて、新しいパスワードを設定してください。',
+    link,
+    '',
+    'このメールに心当たりがない場合は、無視してください。'
+  ].join('\n');
+  const safe = escapeHtml(link);
+  const html = [
+    '<p>イエノミクスのパスワード再設定です。</p>',
+    '<p>以下のボタン（またはリンク）を開いて、新しいパスワードを設定してください。</p>',
+    `<p><a href="${safe}">パスワードを再設定する</a></p>`,
+    `<p style="word-break:break-all;font-size:12px;color:#666">${safe}</p>`,
+    '<p>このメールに心当たりがない場合は、無視してください。</p>'
+  ].join('');
+  return { subject, text, html };
+}
+
+/**
+ * 新規登録用サインインリンクを Resend で送信（未ログイン可）。
+ * data: { email }
+ * レスポンスにリンクは含めない。
+ */
+exports.sendSignInEmail = onCall(
+  {
+    region: 'asia-northeast1',
+    secrets: [resendApiKey]
+  },
+  async (request) => {
+    const email = normalizeAuthEmail(request.data?.email);
+    if (!email || !isValidAuthEmail(email)) {
+      throw new HttpsError('invalid-argument', '有効なメールアドレスを入力してください');
+    }
+
+    await assertAuthEmailRateLimit(email, { kind: 'signIn' });
+
+    try {
+      try {
+        await adminAuth.getUserByEmail(email);
+        throw new HttpsError('already-exists', 'このメールアドレスはすでに登録されています', {
+          authCode: 'auth/email-already-in-use'
+        });
+      } catch (e) {
+        if (e instanceof HttpsError) throw e;
+        if (e?.code !== 'auth/user-not-found') {
+          console.error('[sendSignInEmail] getUserByEmail', e?.code || e?.message || e);
+          throw new HttpsError('internal', 'メール送信に失敗しました');
+        }
+      }
+
+      let link;
+      try {
+        link = await adminAuth.generateSignInWithEmailLink(email, AUTH_ACTION_CODE_SETTINGS);
+      } catch (e) {
+        console.error('[sendSignInEmail] generateSignInWithEmailLink', e?.code || e?.message || e);
+        throw new HttpsError('internal', 'メール送信に失敗しました');
+      }
+
+      const { subject, text, html } = buildSignInEmailContent(link);
+      const id = await sendResendAuthEmail({
+        to: email,
+        subject,
+        text,
+        html,
+        logTag: 'sendSignInEmail'
+      });
+
+      console.log('[sendSignInEmail] sent', { to: maskAuthEmail(email), id });
+      return { ok: true };
+    } catch (e) {
+      // 既存メール拒否は制限を残す（列挙連打防止）。送信・生成失敗時のみ枠を戻す。
+      const keepLimit = e instanceof HttpsError && e.code === 'already-exists';
+      if (!keepLimit) await releaseAuthEmailRateLimit(email);
+      throw e;
+    }
+  }
+);
+
+/**
+ * パスワード再設定リンクを Resend で送信（未ログイン可）。
+ * data: { email }
+ * 存在しないメールは not-found（auth/user-not-found 相当）。
+ * レスポンスにリンクは含めない。
+ */
+exports.sendPasswordResetEmail = onCall(
+  {
+    region: 'asia-northeast1',
+    secrets: [resendApiKey]
+  },
+  async (request) => {
+    const email = normalizeAuthEmail(request.data?.email);
+    if (!email || !isValidAuthEmail(email)) {
+      throw new HttpsError('invalid-argument', '有効なメールアドレスを入力してください');
+    }
+
+    await assertAuthEmailRateLimit(email, { kind: 'passwordReset' });
+
+    try {
+      try {
+        await adminAuth.getUserByEmail(email);
+      } catch (e) {
+        if (e?.code === 'auth/user-not-found') {
+          throw new HttpsError('not-found', 'このメールアドレスのアカウントが見つかりません', {
+            authCode: 'auth/user-not-found'
+          });
+        }
+        console.error('[sendPasswordResetEmail] getUserByEmail', e?.code || e?.message || e);
+        throw new HttpsError('internal', 'メール送信に失敗しました');
+      }
+
+      let link;
+      try {
+        link = await adminAuth.generatePasswordResetLink(email, AUTH_ACTION_CODE_SETTINGS);
+      } catch (e) {
+        console.error('[sendPasswordResetEmail] generatePasswordResetLink', e?.code || e?.message || e);
+        throw new HttpsError('internal', 'メール送信に失敗しました');
+      }
+
+      const { subject, text, html } = buildPasswordResetEmailContent(link);
+      const id = await sendResendAuthEmail({
+        to: email,
+        subject,
+        text,
+        html,
+        logTag: 'sendPasswordResetEmail'
+      });
+
+      console.log('[sendPasswordResetEmail] sent', { to: maskAuthEmail(email), id });
+      return { ok: true };
+    } catch (e) {
+      const keepLimit = e instanceof HttpsError && e.code === 'not-found';
+      if (!keepLimit) await releaseAuthEmailRateLimit(email);
+      throw e;
+    }
   }
 );
