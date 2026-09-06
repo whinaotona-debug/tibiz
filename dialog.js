@@ -1,6 +1,6 @@
 // 標準の alert / confirm / prompt を、アプリの見た目に合わせたダイアログに置き換える。
 // render() が #app を作り直しても消えないよう、専用のルート要素に描画する。
-import { esc } from './utils.js?v=264';
+import { esc } from './utils.js?v=265';
 
 let dialogRoot = null;
 let busyRoot = null;
@@ -183,7 +183,11 @@ export function showParentSetupComplete(code) {
       '',
       `同期ID：${syncCode}`,
       '',
-      'お子さまの端末でイエノミクスを開き、「子供として開始」からこの同期IDを入力してください。'
+      'お子さまの端末でイエノミクスを開いて、',
+      '同期IDを入力してください。',
+      '',
+      '▼ イエノミクス',
+      'https://whinaotona-debug.github.io/ienomics/index.html'
     ].join('\n');
 
     dialogRoot.querySelector('[data-dialog-share]')?.addEventListener('click', async () => {
